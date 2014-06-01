@@ -63,13 +63,14 @@ startslaves()
 {
 	slavecount=$1
 	declare -a PROCS_SLAVE
-	for (( i = 0; i -lt ${slavecount}; i++ ))
+	while (( i < $slavecount ))
 	do
 		port=$(getfreeport 9101 2)
 		
 		${EXEC_PREFIX}/mesos-salve --master=${ZK_ADDRESS}/${CLUSTER_NAME} \
 			--work_dir=/tmp/slave$i --ip=${HOST_IP} --hostname=${HOST_IP} --port=${port} &
 		${PROCS_SLAVE[i]} = $!
+	let "i=i+1"
 	done
 
 	writetofile ${PROCS_SLAVE} ${PROCS_SLAVE_FILE}
