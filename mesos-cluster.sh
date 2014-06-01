@@ -11,6 +11,7 @@ JQ=/usr/bin/jq 	#JSON command line reader
 MARATHON_PORT=""
 PROCS_MASTER_FILE="${DEPLOY_DIR}/masters"
 PROCS_SLAVE_FILE="${DEPLOY_DIR}/slaves"
+PROCS_MARATHON_FILE="${DEPLOY_DIR}/marathon"
 
 usage() {
   echo "Usage: mesos-start-cluster.sh [start] [status] [stop]"
@@ -104,8 +105,9 @@ killprocs()
 
 stopcluster()
 {
-	[ -f $DEPLOY_DIR/masters ] && killprocs $DEPLOY_DIR/masters
-	[ -f $DEPLOY_DIR/slaves] && killprocs $DEPLOY_DIR/slaves
+	[ -f ${PROCS_MASTER_FILE} ] && killprocs ${PROCS_MASTER_FILE}
+	[ -f ${PROCS_SLAVE_FILE} ] && killprocs ${PROCS_SLAVE_FILE}
+	[ -f $${PROC_MARATHON_FILE} ] && killprocs ${PROC_MARATHON_FILE}
 }
 
 startmarathon()
@@ -119,6 +121,8 @@ startmarathon()
 	MARATHON_PORT=$(getfreeport 9000 2)
     	./bin/start --master ${ZK_ADDRESS}/${CLUSTER_NAME} --zk_hosts localhost:2181 \
 		--http_port ${MARATHON_PORT} > marathon.out 2>&1 &
+	[ "$?" == "0" ] && echo $! > ${PROC_MARATHON_FILE}
+
 	cd ${olddir}
 
 	#wait until port is open
@@ -165,11 +169,11 @@ do
 		;;
 
 		stop)
-		COMMAND="stop"
+		COMMAND='stop'
 		;;
 
 		status)
-		COMMAND="status"
+		COMMAND='status'
 		jobfile=$2
 		shift 2
 		;;
