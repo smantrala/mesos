@@ -1,19 +1,23 @@
-#!/bin/bash
+#!/bin/bash -x
 
 COMMAND=""
 EXEC_PREFIX=/usr/local/sbin
 DEPLOY_DIR=/usr/local/var/mesos/deploy
-ZK_ADRRESS="zk://localhost:2181/cluster1"
+ZK_ADDRESS="zk://localhost:2181"
+CLUSTER_NAME="cluster1"
 HOST_IP="10.141.141.10"
 HTTP=/usr/local/bin/http
-JQ=/usr/bin/jq #JSON command line reader
+JQ=/usr/bin/jq 	#JSON command line reader
+MARATHON_PORT=""
+PROCS_MASTER_FILE="${DEPLOY_DIR}/masters"
+PROCS_SLAVE_FILE="${DEPLOY_DIR}/slaves"
 
 usage() {
   echo "Usage: mesos-start-cluster.sh [start] [status] [stop]"
-  echo " -h          	display this message"
-  echo " start 		Starts the Cluster"
-  echo " stop 		Stops the Cluster"
-  echo " status 	Displays status of the job in the Cluster"
+  echo " -h	display this message"
+  echo " start <mastercount> <slavecount> <job.json>. Starts the Cluster with specified master, slave count and submits job"
+  echo " stop 	Stops the Cluster"
+  echo " status <job.json>	Displays status of the job in the Cluster"
   if test ${#} -gt 0; then
     echo
     echo "${@}"
@@ -41,30 +45,34 @@ startmasters()
 {
 	mastercount=$1
 	declare -a PROCS_MASTER
-	for (( i = 0; i > ${mastercount}; i++ ))
+	let i=0
+	while (( i < $mastercount ))
 	do
+	set -x
 		port=$(getfreeport 9001 2)
 		
-		${EXEC_PREFIX}/mesos-master --${ZK_ADDRESS} --${HOST_IP} --port=${port} &
-		${PROCS_MASTER[i]} = $!
+		(${EXEC_PREFIX}/mesos-master --zk=${ZK_ADDRESS}/${CLUSTER_NAME} --ip=${HOST_IP} --port=${port}; ${PROCS_MASTER[i]} = $!)
+
+	let "i=i+1"
 	done
 
-	writetofile ${PROCS_MASTER} ${DEPLOY_DIR}/masters
+	writetofile ${PROCS_MASTER} ${PROCS_MASTER_FILE} 
 }
 
 startslaves()
 {
 	slavecount=$1
 	declare -a PROCS_SLAVE
-	for (( i = 0; i > ${slavecount}; i++ ))
+	for (( i = 0; i -lt ${slavecount}; i++ ))
 	do
 		port=$(getfreeport 9101 2)
 		
-		${EXEC_PREFIX}/mesos-master --${ZK_ADDRESS} --${HOST_IP} --port=${port} &
+		${EXEC_PREFIX}/mesos-salve --master=${ZK_ADDRESS}/${CLUSTER_NAME} \
+			--work_dir=/tmp/slave$i --ip=${HOST_IP} --hostname=${HOST_IP} --port=${port} &
 		${PROCS_SLAVE[i]} = $!
 	done
 
-	writetofile ${PROCS_SLAVE} ${DEPLOY_DIR}/slaves
+	writetofile ${PROCS_SLAVE} ${PROCS_SLAVE_FILE}
 }
 
 writetofile()
@@ -74,9 +82,9 @@ writetofile()
 
 	[ ! -f $filename ] && touch $filename
 
-	for i in "${procs_array}"
+	for i in "${procs_array[@]}"
 	do
-		echo $i >> ${filename}
+		echo $i >> $filename
 	done
 }
 
@@ -102,12 +110,18 @@ stopcluster()
 startmarathon()
 {
 	olddir=`pwd`
-	[! -d marathonserver ] && mkdir marathonserver
+	[ ! -d marathonserver ] && mkdir marathonserver
 	cd marathonserver
     	curl -O http://downloads.mesosphere.io/marathon/marathon-0.4.1.tgz
     	tar xzvf marathon-0.4.1.tgz && cd marathon
-    	./bin/start --master ${Zk_ADDRESS} --zk_hosts localhost:2181 --http_port 9000 > marathon.out 2>&1 &
+
+	MARATHON_PORT=$(getfreeport 9000 2)
+    	./bin/start --master ${ZK_ADDRESS}/${CLUSTER_NAME} --zk_hosts localhost:2181 \
+		--http_port ${MARATHON_PORT} > marathon.out 2>&1 &
 	cd ${olddir}
+
+	#wait until port is open
+	while ! nc -vz localhost ${MARATHON_PORT} ; do sleep 1; done
 }
 
 
@@ -115,14 +129,14 @@ submitjob()
 {
 	jobfile=$1
 
-	[ -f ${jobfile} ] &&  echo `cat ${jobfile}` | $HTTP POST ${HOST_IP}:9000/v2/apps
+	[ -f ${jobfile} ] &&  echo `cat ${jobfile}` | $HTTP POST ${HOST_IP}:${MARATHON_PORT}/v2/apps
 }
 
 getjobstatus()
 {
-	id=$(`cat ${jobfile} | jq '.id'`)
+	id=$(`cat ${jobfile} | ${JQ} '.id'`)
 
-	echo $HTTP ${HOST_IP}:9000/v2/apps/${id}
+	echo $HTTP ${HOST_IP}:${MARATHON_PORT}/v2/apps/${id}
 }
 
 OPTS=`getopt -n$0 -u -a --longoptions="start: stop: status:" "h" "$@"` || usage
@@ -131,23 +145,32 @@ eval set -- "$OPTS"
 
 [ $# -eq 0 ] && usage
 
+echo "ARGUMENTS== $*"
+
 while [ $# -gt 0 ]
 do
+	shift
 	case "$1" in 
 		-h)
 		usage
 		;;
 		
-		--start)	
+		start)	
 		COMMAND='start'
+		mastercount=$2
+		slavecount=$3
+		jobfile=$4
+		break
 		;;
 
-		--stop)
+		stop)
 		COMMAND="stop"
 		;;
 
-		--status)
+		status)
 		COMMAND="status"
+		jobfile=$2
+		shift 2
 		;;
 
 		--)
@@ -167,3 +190,18 @@ do
 
 	shift
 done
+
+echo "COMMAND = $COMMAND"
+
+if [ "${COMMAND}" = 'start' ]
+then
+	startmasters $mastercount
+	startslaves $slavecount
+	startmarathon
+	submitjob $jobfile
+elif [ "${COMMAND}" = 'status' ]
+then
+	getstatus ${jobfile}
+else
+	stopcluster
+fi
