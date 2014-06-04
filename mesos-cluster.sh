@@ -1,4 +1,4 @@
-#!/bin/bash -x
+#!/bin/bash 
 
 COMMAND=""
 EXEC_PREFIX=/usr/local/sbin
@@ -49,10 +49,12 @@ startmasters()
 	let i=0
 	while (( i < $mastercount ))
 	do
-	set -x
 		port=$(getfreeport 9001 2)
 		
-		(${EXEC_PREFIX}/mesos-master --zk=${ZK_ADDRESS}/${CLUSTER_NAME} --ip=${HOST_IP} --port=${port}; ${PROCS_MASTER[i]} = $!)
+		(${EXEC_PREFIX}/mesos-master --zk=${ZK_ADDRESS}/${CLUSTER_NAME} \
+			--ip=${HOST_IP} --port=${port}; ${PROCS_MASTER[i]} = $!) &
+		
+		PROCS_MASTER[i] = $!	
 
 	let "i=i+1"
 	done
@@ -70,7 +72,7 @@ startslaves()
 		
 		${EXEC_PREFIX}/mesos-salve --master=${ZK_ADDRESS}/${CLUSTER_NAME} \
 			--work_dir=/tmp/slave$i --ip=${HOST_IP} --hostname=${HOST_IP} --port=${port} &
-		${PROCS_SLAVE[i]} = $!
+		PROCS_SLAVE[i] = $!
 	let "i=i+1"
 	done
 
@@ -170,12 +172,13 @@ do
 
 		stop)
 		COMMAND='stop'
+		break
 		;;
 
 		status)
 		COMMAND='status'
 		jobfile=$2
-		shift 2
+		break
 		;;
 
 		--)
